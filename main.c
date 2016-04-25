@@ -47,13 +47,10 @@ typedef struct {
   float radius;
 }sphere_info;
 
-int rnd = 0;
 float sphere_distance(ray * r, sphere_info * s){
   float d = vec3_len(vec3_sub(r->position, s->position)) - s->radius;
   float y = sin(r->position.y * 200) * 20;
-  //if(d < 0.05){
-  r->color = 480 - y;// - (rand() % 50);
-    //}
+  r->color = 480 - y;
   return MIN(d, 0.9 - r->position.y);;
 }
 
@@ -69,7 +66,7 @@ int octree_from_distance_field_it(ray * r, octree_distance_field * oct, int offs
   ASSERT(offset< oct->size);
   
   float d = oct->f(r, oct->fieldinfo);
-  if(d <= -r->size){// && r->size >= oct->min_size && r->size * 0.5 <= oct->min_size){
+  if(d <= -r->size){
     oct->data[offset] = r->color;
     return 0;
   }
@@ -104,30 +101,29 @@ int octree_from_distance_field_it(ray * r, octree_distance_field * oct, int offs
   }
   ASSERT(header >= 0 && header <= 255);
   ASSERT(offset + 1 < oct->size);
-  //logd("sub size: %i %i\n", sub_size, sub_size %9);
   oct->data[offset] = sub_size / 9;
   oct->data[offset + 1] = header;
   return sub_size;
 }
 
 octree octree_from_distance_field(float (* f)(ray * r, void * fieldinfo), void * fieldinfo){
-  octree o = {.data = alloc0(10 * sizeof(u16)), .size = 10 };
-  octree_distance_field odf = {.f = f, .fieldinfo = fieldinfo, .data = o.data, .size = 10, .min_size = 0.001};
-  ray r0 = {.position = vec3_half, .direction = vec3_zero, .x = 0, .y = 0, .color = 0, .normal = vec3_zero, .size = 0.5};
+  octree_distance_field odf = {
+    .f = f,
+    .fieldinfo = fieldinfo,
+    .data = alloc0(10 * sizeof(u16)),
+    .size = 10,
+    .min_size = 0.001
+  };
+
+  ray r0 = {
+    .position = vec3_half, .direction = vec3_zero,
+    .x = 0, .y = 0, .color = 0, .normal = vec3_zero, .size = 0.5};
+  
   octree_from_distance_field_it(&r0, &odf, 0);
-  o.data = odf.data;
-  memmove(o.data, o.data + 1, odf.size * sizeof(o.data[0]));
-  o.size = odf.size;
-  return o;
-  logd("\n\n");
-  logd("::Printing data::\n");
-  for(int i = 0; i < odf.size; i++){
-    logd(" %5i", CLAMP(odf.data[i],0,65000));
-    if(i % 10 == 9)
-      logd("\n");
-  }
-  logd("\n\n");
-  return o;
+  
+  memmove(odf.data, odf.data + 1, odf.size * sizeof(odf.data[0]));
+  
+  return (octree){.data = odf.data, .size = odf.size};
 }
 
 void trace_octree(octree oct, ray * r){
@@ -189,7 +185,9 @@ void trace_octree(octree oct, ray * r){
 }
 
 int main(){
-  int width = 1024, height = 1024;   
+  int width = 256, height = 256;   
+  u8 img[width * height];
+  memset(img, 0, sizeof(img));
   gl_window * win = gl_window_open(width, height);
   gl_window_make_current(win);
   
@@ -197,14 +195,15 @@ int main(){
     logd("Y: %f\n", y);
     glClearColor(0,0,0,0);
     glClear(GL_COLOR_BUFFER_BIT);
-    sphere_info s = {.position = vec3_new(sin(y * 20)*0.33 + 0.5 , cos(y * 5.0) * 0.3 + 0.5,cos(y * 20)*0.33 + 0.5), .radius = 0.2};
-    octree oct2 = octree_from_distance_field((void *) sphere_distance, &s);
+    sphere_info s =
+      {
+      .position = vec3_new(sin(y * 20) * 0.33 + 0.5,
+			   cos(y * 5.0) * 0.3 + 0.5,
+			   cos(y * 20)*0.33 + 0.5),
+      .radius = 0.2
+    };
+    octree oct = octree_from_distance_field((void *) sphere_distance, &s);
 
-
-    octree oct = oct2;
-
-    u8 img[width * height];
-    memset(img, 0, sizeof(img));
     float left = -1, right = 2, bottom = -1, top = 2;
     float _w = (right - left) / (float)width, _h = (top - bottom) / (float)height;
     u64 t1 = timestamp();
@@ -219,23 +218,18 @@ int main(){
 	  .y = (int)((y - bottom) / _h)
 	};
 	trace_octree(oct, &r);
-	int pt = (int)(r.x + r.y * width);
+	int pt = (int)(r.x + (height - r.y - 1) * width);
 	img[pt] = r.color;
       }
     }
     u64 t2 = timestamp();
-    /*char buf[100];
-      sprintf(buf,"test_%f.png",y);*/
     logd("Rendering took %fs\n", ((float)(t2 - t1)) * 1e-6);
-    /*write_png_file(buf, width, height, img, 1, 8);
-    u16 lok = calc_octree_size(oct);
-    logd("lok? %i\n", lok);*/
     logd("octree size: %iB\n", oct.size * sizeof(u16));
-    octree_delete(&oct2);
+    octree_delete(&oct);
     glDrawPixels(width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, img);
     gl_window_swap(win);
-    //iron_sleep(100000);
   }
   gl_window_destroy(&win);
+  gl_window_terminate();
   return 0;
 }
