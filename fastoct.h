@@ -1,0 +1,1 @@
+bool fastoct_test();
