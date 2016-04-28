@@ -1,4 +1,4 @@
-OPT = -g3 -O0
+OPT = -g3 -O4
 LIB_SOURCES =  iron/mem.c iron/process.c iron/array.c iron/math.c iron/time.c  iron/log.c iron/fileio.c iron/linmath.c iron/test.c iron/error.c iron/image.c iron/gl.c iron/coroutines2.c main.c ccgui.c fastoct.c
 CC = gcc
 TARGET = glitch
