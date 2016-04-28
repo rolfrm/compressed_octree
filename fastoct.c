@@ -1,20 +1,10 @@
 #include "common.h"
 
-typedef struct{
-  u16 * data;
-  size_t size;
-}octree16;
-
 void octree16_delete(octree16 * oct){
   dealloc(oct->data);
   oct->data = NULL;
   oct->size = 0;
 }
-
-typedef struct{
-  octree16 * tree;
-  int offset;
-}octree16_node;
 
 int calc_octree16_size(octree16 oct){
   int items = 0;
@@ -38,27 +28,6 @@ int calc_octree16_size(octree16 oct){
   return items;
 }
 
-typedef struct{
-  vec3 position;
-  vec3 direction;
-  int x, y;
-  u16 color;
-  vec3 normal;
-  float size;
-  u16 * color_ptr;
-}ray;
-
-typedef struct {
-  vec3 position;
-  float radius;
-}sphere_info;
-
-float sphere_distance(ray * r, sphere_info * s){
-  float d = vec3_len(vec3_sub(r->position, s->position)) - s->radius;
-  float y = sin(r->position.y * 200) * 20;
-  r->color = 480 - y;
-  return d;//MIN(d, 0.9 - r->position.y);;
-}
 
 typedef struct{
   float (* f)(ray * r, void * fieldinfo);
@@ -118,7 +87,7 @@ octree16 octree16_from_distance_field(float (* f)(ray * r, void * fieldinfo), vo
     .fieldinfo = fieldinfo,
     .data = alloc0(10 * sizeof(u16)),
     .size = 10,
-    .min_size = 0.01
+    .min_size = 0.005
   };
 
   ray r0 = {
@@ -191,181 +160,20 @@ void trace_octree16(octree16 oct, ray * r){
   }
 }
 
-struct _octree_ptr;
-typedef struct _octree_ptr octree_ptr;
-struct _octree_ptr{
-  u8 subs;
-  u8 compressed;
-  union{
-    octree_ptr * sub_node;
-    u16 color;
-    octree16 compressed_tree;
-  }nodes[8];
-};
-void trace_octree(octree_ptr oct, ray * r);
-bool fastoct_test(){
-  int width = 256, height = 256;   
-  u8 img[width * height];
-  char buffer[1000];
-  memset(buffer, 0, sizeof(buffer));
-  memset(img, 0, sizeof(img));
-  gl_window * win = gl_window_open(width, height);
-  gl_window_make_current(win);
-  float y = 0.0;
-  sphere_info s =
-    {
-      .position = vec3_new(sin(y * 20) * 0.33 + 0.5,
-			   cos(y * 5.0) * 0.3 + 0.5,
-			   cos(y * 20)*0.33 + 0.5),
-      .radius = 0.2
-    };
-  octree_ptr oct = {.compressed = 1};
-  oct.nodes[0].compressed_tree = octree16_from_distance_field((void *) sphere_distance, &s);
-  /*for(int i = 1; i < 8; i++){
+void octree_delete(octree_ptr * oct){
+  for(int i = 0; i < 8; i++){
     int mask = 1 << i;
-    oct.nodes[i] = oct.nodes[0];
-    oct.compressed |= mask;
-    }*/
-  vec3 speed_v = vec3_new(0, 0, 0);
-  vec3 cam_position = vec3_new(0,0,2);
-  vec3 spin = vec3_new(0, 0, 0);
-  quat q = quat_identity();
-  u16 color = 0;
-  /*
-  float y_turn = 0.0;
-  float x_turn = 0.0;*/
-  
-  while(true){
-    q = quat_mul(quat_from_axis(vec3_new(0,1,0), spin.x * 0.1), q);
-    q = quat_mul(quat_from_axis(vec3_new(1,0,0), spin.y * 0.1), q);
-    vec3 s = quat_mul_vec3(q, vec3_scale(speed_v, 0.1));
-    cam_position = vec3_add(s, cam_position);
-    //cam_position.z += speed;
-    mat4 m = mat4_perspective(1.0, 1.0, 1, 100.0);
-    mat4 w = mat4_from_quat(q);
-    
-    float left = -1, right = 1, bottom = -1, top = 1;
-    float _w = (right - left) / (float)width, _h = (top - bottom) / (float)height;
-    u64 t1 = timestamp();
-    mat4 m2 = mat4_mul(w, m);
-    for(float y = MIN(top, bottom); y < MAX(top, bottom); y += ABS(_h)){
-      for(float x = left; x < right; x += _w){
-	vec3 screen_pt = vec3_new(x, y, 1.0);
-	vec3 v = mat4_mul_vec3(m2, screen_pt);
-	//vec3_print(screen_pt);vec3_print(v);logd("\n");
-	//ERROR("STOP");
-	
-	ray r = {
-	  .position = cam_position,
-	  .direction = vec3_normalize(v),
-	  .color = 0,
-	  .x = (int)((x - left) / _w),
-	  .y = (int)((y - bottom) / _h)
-	};
-	trace_octree(oct, &r);
-	int pt = (int)(r.x + (r.y - 1) * width);
-	img[pt] = r.color;
-      }
+    if(oct->subs & mask){
+      octree_delete(oct->nodes[i].sub_node);
+      dealloc(oct->nodes[i].sub_node);
+      oct->nodes[i].sub_node = NULL;
+    }else if(oct->compressed & mask){
+      octree16_delete(&oct->nodes[i].compressed_tree);
+    }else{
+      oct->nodes[i].color = 0;
     }
-    u64 t2 = timestamp();
-    if(false)
-      logd("Rendering took %fs\n", ((float)(t2 - t1)) * 1e-6);
-    
-    glDrawPixels(width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, img);
-    gl_window_swap(win);
-    gl_window_event evts[10];
-    size_t evt_cnt = gl_get_events(evts, array_count(evts));
-    if(evt_cnt > 0){
-      logd("Event count: %i\n", evt_cnt, buffer);
-      for(size_t i = 0; i< evt_cnt; i++){
-	gl_window_event * evt = evts + i;
-	if(evt->type == EVT_KEY_DOWN || evt->type == EVT_KEY_UP){
-	  float d = evt->type == EVT_KEY_DOWN ? -1.0f : 1.0f;
-	  evt_key * key = (void *) evt;
-	  if(!key->ischar){
-	    if(key->key == KEY_RIGHT){
-	      spin.x += d;
-	    }
-	    if(key->key == KEY_LEFT){
-	      spin.x -= d;
-	    }
-	    if(key->key == KEY_UP){
-	      spin.y += d;
-	    }
-	    if(key->key == KEY_DOWN){
-	      spin.y -= d;
-	    }
-	    if(key->key == 'W'){
-	      speed_v.z += d;
-	    }
-	    if(key->key == 'S'){
-	      speed_v.z -= d;
-	    }
-	    if(key->key == 'A'){
-	      speed_v.x += d;
-	    }
-	    if(key->key == 'D'){
-	      speed_v.x -= d;
-	    }
-	  }
-	}
-	if(evt->type == EVT_KEY_DOWN){
-	  evt_key * key = (void *) evt;
-	  if(!key->ischar){
-	    logd("KEY %i\n", key->key);
-	  }
-	  if(key->ischar){
-	    for(u32 i = 0; i < array_count(buffer); i++){
-	      if(buffer[i] == 0){
-		buffer[i] = key->codept;
-		logd("Str: '%s'\n", buffer);
-		break;
-	      }
-	    }
-	  }
-	}
-
-	if(evt->type == EVT_MOUSE_BTN_DOWN){
-	  evt_mouse_btn * btnevt = (void *)evt;
-	  logd("button: %i\n", btnevt->button);
-	  int _x, _y;
-	  float x, y;
-	  {
-	    get_mouse_position(win, &_x, &_y);
-	    _y = height - _y;
-	    x = (float)_x;
-	    y = (float)_y;
-	    x = x *_w + left;
-	    y = y *_h + bottom;
-	  }
-	  logd("Pushed: %f %f\n", x, y);
-	  vec3 screen_pt = vec3_new(x, y, 1);
-	  vec3 v = mat4_mul_vec3(m2, screen_pt);
-	  ray r = {
-	    .position = cam_position,
-	    .direction = vec3_normalize(v),
-	    .color = 0,
-	    .x = _x,
-	    .y = _y
-	  };
-	  trace_octree(oct, &r);
-	  logd("Color: %i\n", color);
-	  if(btnevt->button == 1){
-	    color = r.color;
-	  }else if(r.color_ptr != NULL){
-	    *r.color_ptr = color;
-	  }
-	  
-	}
-      }
-    }
-    //octree16_delete(&oct);
-    
-  }
-  return TEST_SUCCESS;
+  }  
 }
-
-
 
 int calc_octree_size(octree_ptr oct){
   int subsize = 0;
@@ -434,4 +242,159 @@ void trace_octree(octree_ptr oct, ray * r){
     }
     else return;
   }
+}
+
+
+// Testing
+typedef struct {
+  vec3 position;
+  float radius;
+}sphere_info;
+
+float sphere_distance(ray * r, sphere_info * s){
+  float d = vec3_len(vec3_sub(r->position, s->position)) - s->radius;
+  float y = sin(r->position.y * 200) * 20;
+  r->color = 480 - y;
+  return d;//MIN(d, 0.9 - r->position.y);;
+}
+
+
+bool fastoct_test(){
+  int width = 256, height = 256;   
+  u8 img[width * height];
+  char buffer[1000];
+  memset(buffer, 0, sizeof(buffer));
+  memset(img, 0, sizeof(img));
+  gl_window * win = gl_window_open(width, height);
+  gl_window_make_current(win);
+  float y = 0.0;
+  sphere_info s =
+    {
+      .position = vec3_new(sin(y * 20) * 0.33 + 0.5,
+			   cos(y * 5.0) * 0.3 + 0.5,
+			   cos(y * 20)*0.33 + 0.5),
+      .radius = 0.2
+    };
+  octree_ptr oct = {.compressed = 1};
+  oct.nodes[0].compressed_tree = octree16_from_distance_field((void *) sphere_distance, &s);
+  vec3 speed_v = vec3_new(0, 0, 0);
+  vec3 cam_position = vec3_new(0,0,2);
+  vec3 spin = vec3_new(0, 0, 0);
+  quat q = quat_identity();
+  u16 color = 0;
+  
+  while(true){
+    q = quat_mul(quat_from_axis(vec3_new(0,1,0), spin.x * 0.1), q);
+    q = quat_mul(quat_from_axis(vec3_new(1,0,0), spin.y * 0.1), q);
+    vec3 s = quat_mul_vec3(q, vec3_scale(speed_v, 0.1));
+    cam_position = vec3_add(s, cam_position);
+    mat4 m = mat4_perspective(1.0, 1.0, 1, 100.0);
+    mat4 w = mat4_from_quat(q);
+    
+    float left = -1, right = 1, bottom = -1, top = 1;
+    float _w = (right - left) / (float)width, _h = (top - bottom) / (float)height;
+    u64 t1 = timestamp();
+    mat4 m2 = mat4_mul(w, m);
+    for(float y = MIN(top, bottom); y < MAX(top, bottom); y += ABS(_h)){
+      for(float x = left; x < right; x += _w){
+	vec3 screen_pt = vec3_new(x, y, 1.0);
+	vec3 v = mat4_mul_vec3(m2, screen_pt);
+	
+	ray r = {
+	  .position = cam_position,
+	  .direction = vec3_normalize(v),
+	  .color = 0,
+	  .x = (int)((x - left) / _w),
+	  .y = (int)((y - bottom) / _h)
+	};
+	trace_octree(oct, &r);
+	int pt = (int)(r.x + (r.y - 1) * width);
+	img[pt] = r.color;
+      }
+    }
+    u64 t2 = timestamp();
+    if(false)
+      logd("Rendering took %fs\n", ((float)(t2 - t1)) * 1e-6);
+    
+    glDrawPixels(width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, img);
+    gl_window_swap(win);
+    gl_window_event evts[10];
+    size_t evt_cnt = gl_get_events(evts, array_count(evts));
+    if(evt_cnt > 0){
+      //logd("Event count: %i\n", evt_cnt, buffer);
+      for(size_t i = 0; i< evt_cnt; i++){
+	
+	gl_window_event * evt = evts + i;
+	if(evt->type == EVT_WINDOW_CLOSE){
+	  goto end;
+	}
+	if(evt->type == EVT_KEY_DOWN || evt->type == EVT_KEY_UP){
+	  float d = evt->type == EVT_KEY_DOWN ? -1.0f : 1.0f;
+	  evt_key * key = (void *) evt;
+	  if(!key->ischar){
+	    if(key->key == KEY_RIGHT){
+	      spin.x += d;
+	    }
+	    if(key->key == KEY_LEFT){
+	      spin.x -= d;
+	    }
+	    if(key->key == KEY_UP){
+	      spin.y += d;
+	    }
+	    if(key->key == KEY_DOWN){
+	      spin.y -= d;
+	    }
+	    if(key->key == 'W'){
+	      speed_v.z += d;
+	    }
+	    if(key->key == 'S'){
+	      speed_v.z -= d;
+	    }
+	    if(key->key == 'A'){
+	      speed_v.x += d;
+	    }
+	    if(key->key == 'D'){
+	      speed_v.x -= d;
+	    }
+	  }
+	}
+	if(evt->type == EVT_MOUSE_BTN_DOWN){
+	  evt_mouse_btn * btnevt = (void *)evt;
+	  logd("button: %i\n", btnevt->button);
+	  int _x, _y;
+	  float x, y;
+	  {
+	    get_mouse_position(win, &_x, &_y);
+	    _y = height - _y;
+	    x = (float)_x;
+	    y = (float)_y;
+	    x = x *_w + left;
+	    y = y *_h + bottom;
+	  }
+	  logd("Pushed: %f %f\n", x, y);
+	  vec3 screen_pt = vec3_new(x, y, 1);
+	  vec3 v = mat4_mul_vec3(m2, screen_pt);
+	  ray r = {
+	    .position = cam_position,
+	    .direction = vec3_normalize(v),
+	    .color = 0,
+	    .x = _x,
+	    .y = _y
+	  };
+	  trace_octree(oct, &r);
+	  logd("Color: %i\n", color);
+	  if(btnevt->button == 1){
+	    color = r.color;
+	  }else if(r.color_ptr != NULL){
+	    *r.color_ptr = color;
+	  }
+	  
+	}
+      }
+    } 
+  }
+ end:
+  octree_delete(&oct);
+  gl_window_destroy(&win);
+  return TEST_SUCCESS;
 }
